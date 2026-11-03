@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>學生檢核</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+<header class="top">
+  <h1 id="siteTitle">課堂檢核</h1>
+  <div class="who hidden" id="who">
+    <div id="whoName"></div>
+    <button class="small" id="logoutBtn">登出</button>
+  </div>
+</header>
+
+<main class="narrow">
+  <section class="card center" id="loginCard">
+    <h2>請用學校 Google 帳號登入</h2>
+    <p class="muted">帳號結尾是 <b id="domainHint"></b></p>
+    <div id="gsiBtn" style="display:inline-block"></div>
+  </section>
+
+  <section class="card center hidden" id="loadingCard"><span class="spinner"></span> 載入中…</section>
+
+  <section class="card hidden" id="registerCard">
+    <h2>第一次使用，請登記班級與座號</h2>
+    <p class="muted">登記後無法自行修改，填錯請告訴老師。</p>
+    <label class="field"><span>班級</span><select id="regClass"></select></label>
+    <label class="field"><span>座號</span><input type="number" id="regSeat" min="1" max="99" inputmode="numeric"></label>
+    <label class="field"><span>姓名</span><input type="text" id="regName" maxlength="20"></label>
+    <button class="primary" id="regBtn">確認登記</button>
+  </section>
+
+  <section class="hidden" id="listSection">
+    <div class="card" id="profileCard"></div>
+    <div id="assignList"></div>
+  </section>
+</main>
+
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script src="mock.js"></script>
+<script>
+(function () {
+  var A = window.App, $ = A.$, esc = A.esc;
+  var state = { me: null, open: null, pending: {} };
+
+  $('#siteTitle').textContent = A.CFG.TITLE || '課堂檢核';
+  $('#domainHint').textContent = '@' + A.CFG.STUDENT_DOMAIN;
+  $('#logoutBtn').onclick = A.Auth.logout;
+
+  A.Auth.init({ buttonEl: $('#gsiBtn'), hd: A.CFG.STUDENT_DOMAIN, onLogin: function (p) {
+    $('#loginCard').classList.add('hidden');
+    $('#who').classList.remove('hidden');
+    $('#whoName').textContent = p.email;
+    load();
+  } });
+
+  function show(id) {
+    ['loadingCard', 'registerCard', 'listSection'].forEach(function (x) { $('#' + x).classList.toggle('hidden', x !== id); });
+  }
+
+  function load() {
+    show('loadingCard');
+    return A.api('me').then(function (me) {
+      state.me = me;
+      if (!me.student) return renderRegister();
+      renderList();
+    }).catch(function (e) {
+      show(null);
+      $('#loginCard').classList.remove('hidden');
+      $('#loginCard').innerHTML = '<h2>無法登入</h2><p>' + esc(e.message) + '</p><button id="retryBtn">換個帳號登入</button>';
+      $('#retryBtn').onclick = A.Auth.logout;
+    });
+  }
+
+  function renderRegister() {
+    $('#regClass').innerHTML = '<option value="">請選擇</option>' + state.me.classes.map(function (c) {
+      return '<option>' + esc(c) + '</option>';
+    }).join('');
+    $('#regName').value = state.me.googleName && !/@/.test(state.me.googleName) ? state.me.googleName : '';
+    show('registerCard');
+  }
+
+  $('#regBtn').onclick = function () {
+    var btn = this;
+    var data = { className: $('#regClass').value, seat: $('#regSeat').value, name: $('#regName').value.trim() };
+    if (!data.className || !data.seat || !data.name) return A.toast('請填寫班級、座號與姓名', true);
+    if (!confirm('確認登記為 ' + data.className + ' ' + data.seat + ' 號 ' + data.name + '？')) return;
+    btn.disabled = true;
+    A.api('register', data).then(function () { A.toast('登記完成'); return load(); })
+      .catch(function (e) { A.toast(e.message, true); })
+      .then(function () { btn.disabled = false; });
+  };
+
+  function statusBadge(a) {
+    var s = a.submission;
+    if (!s) return '<span class="badge bad">未繳交</span>';
+    if (s.done) return '<span class="badge ok">已完成</span>';
+    return '<span class="badge warn">未完成</span>';
+  }
+
+  function renderList() {
+    var st = state.me.student, list = state.me.assignments;
+    var done = list.filter(function (a) { return a.submission && a.submission.done; }).length;
+    $('#profileCard').innerHTML =
+      '<div class="row"><div class="grow"><b>' + esc(st.className) + ' ' + esc(st.seat) + ' 號 ' + esc(st.name) + '</b>' +
+      '<div class="muted">進行中的作業 ' + list.length + ' 項，已完成 ' + done + ' 項</div></div>' +
+      '<button class="small" id="refreshBtn">重新整理</button></div>';
+    $('#refreshBtn').onclick = load;
+
+    if (!list.length) {
+      $('#assignList').innerHTML = '<div class="card center muted">目前沒有需要檢核的作業 🎉</div>';
+    } else {
+      $('#assignList').innerHTML = list.map(function (a) {
+        return '<div class="assign" data-id="' + esc(a.id) + '">' +
+          '<div class="head"><div class="grow"><div class="meta">' + esc(a.date) + '・' + esc(a.id) + '</div>' +
+          '<div class="title">' + esc(a.title || a.id) + '</div></div>' + statusBadge(a) + '</div>' +
+          '<div class="body hidden"></div></div>';
+      }).join('');
+      A.$all('.assign .head').forEach(function (h) {
+        h.onclick = function () { toggle(h.parentNode.getAttribute('data-id')); };
+      });
+      if (list.length === 1 || state.open) toggle(state.open || list[0].id, true);
+    }
+    show('listSection');
+  }
+
+  function toggle(id, forceOpen) {
+    A.$all('.assign').forEach(function (el) {
+      var body = $('.body', el);
+      var isTarget = el.getAttribute('data-id') === id;
+      if (isTarget && (forceOpen || body.classList.contains('hidden'))) {
+        state.open = id;
+        renderForm(el, body, find(id));
+        body.classList.remove('hidden');
+      } else {
+        body.classList.add('hidden');
+        if (isTarget) state.open = null;
+      }
+    });
+  }
+
+  function find(id) { return state.me.assignments.filter(function (a) { return a.id === id; })[0]; }
+
+  function reqLabel(mode) { return mode === '必填' ? '<span class="badge bad">必填</span>' : '<span class="badge gray">選填</span>'; }
+
+  function renderForm(el, body, a) {
+    var s = a.submission || { checked: [], text: '', files: [] };
+    state.pending[a.id] = { keep: s.files.map(function (f) { return f.name; }), add: [] };
+    var html = '';
+    if (a.description) html += '<div class="desc">' + esc(a.description) + '</div>';
+    html += '<div><b>檢核項目</b></div>' + a.items.map(function (it, i) {
+      return '<label class="check-item"><input type="checkbox" value="' + i + '"' + (s.checked.indexOf(i) >= 0 ? ' checked' : '') + '><span>' + esc(it) + '</span></label>';
+    }).join('');
+    if (a.textMode !== '不需要') {
+      html += '<label class="field" style="margin-top:12px"><span>文字回覆 ' + reqLabel(a.textMode) + '</span><textarea class="txt" maxlength="5000">' + esc(s.text) + '</textarea></label>';
+    }
+    if (a.fileMode !== '不需要') {
+      html += '<div class="field" style="margin-top:12px"><span class="muted">上傳檔案或照片 ' + reqLabel(a.fileMode) + '（最多 5 個，每個 10MB 內）</span>' +
+        '<ul class="filelist"></ul><input type="file" class="fileInput" multiple accept="image/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip,.txt,.sb3,.py"></div>';
+    }
+    html += '<div class="row" style="margin-top:14px"><button class="primary submitBtn">送出檢核</button>' +
+      (a.submission ? '<span class="muted">上次送出：' + esc(a.submission.updatedAt) + '</span>' : '') + '</div>';
+    body.innerHTML = html;
+    renderFiles(body, a);
+
+    var fi = $('.fileInput', body);
+    if (fi) fi.onchange = function () {
+      var p = state.pending[a.id];
+      Array.prototype.forEach.call(fi.files, function (f) {
+        if (f.size > 10 * 1024 * 1024 && !/^image\/(jpeg|png|webp)$/.test(f.type)) return A.toast(f.name + ' 太大了（上限 10MB）', true);
+        p.add.push(f);
+      });
+      fi.value = '';
+      renderFiles(body, a);
+    };
+    $('.submitBtn', body).onclick = function () { submit(body, a, this); };
+  }
+
+  function renderFiles(body, a) {
+    var ul = $('.filelist', body);
+    if (!ul) return;
+    var p = state.pending[a.id];
+    ul.innerHTML = p.keep.map(function (n, i) {
+      return '<li><span>📎 ' + esc(n) + '（已上傳）</span><button class="small danger" data-k="' + i + '">移除</button></li>';
+    }).join('') + p.add.map(function (f, i) {
+      return '<li><span>🆕 ' + esc(f.name) + '</span><button class="small danger" data-a="' + i + '">移除</button></li>';
+    }).join('');
+    A.$all('button', ul).forEach(function (b) {
+      b.onclick = function () {
+        if (b.hasAttribute('data-k')) p.keep.splice(+b.getAttribute('data-k'), 1);
+        else p.add.splice(+b.getAttribute('data-a'), 1);
+        renderFiles(body, a);
+      };
+    });
+  }
+
+  function submit(body, a, btn) {
+    var p = state.pending[a.id];
+    var checked = A.$all('.check-item input', body).filter(function (c) { return c.checked; }).map(function (c) { return +c.value; });
+    var txtEl = $('.txt', body);
+    var text = txtEl ? txtEl.value : '';
+    if (p.keep.length + p.add.length > 5) return A.toast('最多 5 個檔案', true);
+    var missing = [];
+    if (checked.length < a.items.length) missing.push('還有 ' + (a.items.length - checked.length) + ' 個項目未勾選');
+    if (a.textMode === '必填' && !text.trim()) missing.push('文字回覆尚未填寫');
+    if (a.fileMode === '必填' && p.keep.length + p.add.length === 0) missing.push('尚未上傳檔案');
+    if (missing.length && !confirm(missing.join('\n') + '\n\n仍要先送出（狀態會是「未完成」）嗎？')) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> 送出中…';
+    Promise.all(p.add.map(A.readFile)).then(function (files) {
+      var tooBig = files.filter(function (f) { return f.base64.length * 0.75 > 10 * 1024 * 1024; })[0];
+      if (tooBig) throw new Error(tooBig.name + ' 超過 10MB');
+      return A.api('submit', { assignmentId: a.id, checked: checked, text: text, files: files, keepFiles: p.keep });
+    }).then(function (r) {
+      A.toast(r.done ? '✅ 已完成，送出成功！' : '已送出（尚未全部完成）');
+      return load();
+    }).catch(function (e) {
+      A.toast(e.message, true);
+      btn.disabled = false;
+      btn.textContent = '送出檢核';
+    });
+  }
+})();
+</script>
+</body>
+</html>

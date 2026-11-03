@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>教師後台</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="lib/xlsx.full.min.js"></script>
+</head>
+<body>
+<header class="top">
+  <h1>教師後台</h1>
+  <div class="who hidden" id="who">
+    <div id="whoName"></div>
+    <button class="small" id="logoutBtn">登出</button>
+  </div>
+</header>
+
+<main>
+  <section class="card center" id="loginCard">
+    <h2>教師登入</h2>
+    <p class="muted">請用設定為教師的 Google 帳號登入</p>
+    <div id="gsiBtn" style="display:inline-block"></div>
+  </section>
+
+  <section class="hidden" id="app">
+    <nav class="tabs">
+      <button data-tab="overview" class="active">即時完成率</button>
+      <button data-tab="matrix">班級總表</button>
+      <button data-tab="assign">作業設定</button>
+      <button data-tab="roster">班級與學生</button>
+    </nav>
+
+    <!-- 即時完成率 -->
+    <div data-pane="overview">
+      <div class="card">
+        <div class="row">
+          <label class="field grow" style="margin:0"><span>作業</span><select id="ovAssign"></select></label>
+          <label class="row" style="gap:6px"><input type="checkbox" id="autoRefresh" checked> 每 30 秒自動更新</label>
+          <button id="refreshBtn">立即更新</button>
+          <button class="primary" id="exportBtn">匯出 Excel</button>
+        </div>
+        <div class="muted" id="lastUpdate" style="margin-top:6px"></div>
+      </div>
+      <div class="card">
+        <h2 id="ovTitle"></h2>
+        <div class="stats" id="ovStats"></div>
+      </div>
+      <div class="card" id="ovDetailCard">
+        <div class="row"><h2 class="grow" id="ovDetailTitle" style="margin:0"></h2>
+          <select id="ovFilter" style="width:auto"><option value="">全部學生</option><option value="todo">只看未完成</option><option value="done">只看已完成</option></select></div>
+        <div class="table-wrap" style="margin-top:10px"><table id="ovTable"></table></div>
+      </div>
+    </div>
+
+    <!-- 班級總表 -->
+    <div data-pane="matrix" class="hidden">
+      <div class="card">
+        <div class="row">
+          <label class="field grow" style="margin:0"><span>班級</span><select id="mxClass"></select></label>
+          <label class="field" style="margin:0"><span>起日</span><input type="date" id="mxFrom"></label>
+          <label class="field" style="margin:0"><span>迄日</span><input type="date" id="mxTo"></label>
+        </div>
+        <p class="muted" style="margin:8px 0 0">✅ 已完成　🟡 已送出但未完成　❌ 未繳交</p>
+      </div>
+      <div class="card"><div class="table-wrap"><table class="matrix" id="mxTable"></table></div></div>
+    </div>
+
+    <!-- 作業設定 -->
+    <div data-pane="assign" class="hidden">
+      <div class="card">
+        <div class="row"><h2 class="grow" style="margin:0">作業清單</h2><button class="primary" id="newAssignBtn">＋ 新增作業</button></div>
+        <div class="table-wrap" style="margin-top:10px"><table id="asTable"></table></div>
+      </div>
+      <div class="card hidden" id="asForm">
+        <h2 id="asFormTitle">新增作業</h2>
+        <div class="row">
+          <label class="field grow"><span>作業編號（例如 HW01）</span><input type="text" id="fId" maxlength="30"></label>
+          <label class="field grow"><span>上課日期</span><input type="date" id="fDate"></label>
+        </div>
+        <label class="field"><span>標題</span><input type="text" id="fTitle" maxlength="100"></label>
+        <label class="field"><span>說明（選填）</span><textarea id="fDesc"></textarea></label>
+        <div class="field"><span class="muted">適用班級　<a href="#" id="fAllClasses">全選</a></span><div class="classes-pick" id="fClasses"></div></div>
+        <label class="field"><span>檢核項目（一行一項）</span><textarea id="fItems" placeholder="完成課本第 3 題&#10;程式可以正確執行&#10;已存檔到雲端"></textarea></label>
+        <div class="row">
+          <label class="field grow"><span>上傳檔案或照片</span><select id="fFile"><option>不需要</option><option>選填</option><option>必填</option></select></label>
+          <label class="field grow"><span>文字回覆</span><select id="fText"><option>不需要</option><option>選填</option><option>必填</option></select></label>
+        </div>
+        <label class="row" style="gap:6px;margin-bottom:12px"><input type="checkbox" id="fOpen" checked> 開放學生檢核</label>
+        <div class="row"><button class="primary" id="fSave">儲存</button><button id="fCancel">取消</button></div>
+      </div>
+    </div>
+
+    <!-- 班級與學生 -->
+    <div data-pane="roster" class="hidden">
+      <div class="card">
+        <h2>班級清單</h2>
+        <p class="muted">一行一個班級。改名會影響既有資料的對應，建議學期初設定好就不要再改。</p>
+        <textarea id="clsText" style="min-height:160px"></textarea>
+        <button class="primary" id="clsSave" style="margin-top:8px">儲存班級</button>
+      </div>
+      <div class="card">
+        <h2>匯入學生名單（選用）</h2>
+        <p class="muted">學生也可以第一次登入時自行登記。若要先匯入，請從 Excel 複製四欄貼上：<b>Email、班級、座號、姓名</b>（同 Email 會更新）。</p>
+        <textarea id="importText" placeholder="s1110101@student.ksvs.kh.edu.tw	一年1班	1	王小明"></textarea>
+        <button class="primary" id="importBtn" style="margin-top:8px">匯入</button>
+      </div>
+      <div class="card">
+        <div class="row"><h2 class="grow" style="margin:0">學生名單</h2><select id="rsClass" style="width:auto"></select></div>
+        <div class="table-wrap" style="margin-top:10px"><table id="rsTable"></table></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script src="mock.js"></script>
+<script>
+(function () {
+  var A = window.App, $ = A.$, $all = A.$all, esc = A.esc;
+  var D = null;               // 後端資料
+  var ui = { assign: '', cls: '', tab: 'overview', editing: null };
+  var timer = null;
+
+  $('#logoutBtn').onclick = A.Auth.logout;
+  A.Auth.init({ buttonEl: $('#gsiBtn'), onLogin: function (p) {
+    $('#whoName').textContent = p.email;
+    $('#who').classList.remove('hidden');
+    $('#loginCard').innerHTML = '<span class="spinner"></span> 載入中…';
+    refresh(true);
+  } });
+
+  /* ---------- 載入資料 ---------- */
+  function refresh(first) {
+    return A.api('adminLoad').then(function (data) {
+      D = data;
+      $('#loginCard').classList.add('hidden');
+      $('#app').classList.remove('hidden');
+      if (first) initControls();
+      renderAll();
+      $('#lastUpdate').innerHTML = '最後更新：' + esc(D.serverTime) + '　｜　<a href="' + esc(D.spreadsheetUrl) + '" target="_blank" rel="noopener">開啟原始試算表</a>';
+    }).catch(function (e) {
+      if (first) {
+        $('#loginCard').innerHTML = '<h2>無法進入後台</h2><p>' + esc(e.message) + '</p><button id="retry">換個帳號登入</button>';
+        $('#retry').onclick = A.Auth.logout;
+      } else A.toast(e.message, true);
+    });
+  }
+
+  function setAuto() {
+    clearInterval(timer);
+    if ($('#autoRefresh').checked) timer = setInterval(function () {
+      if (ui.tab === 'overview' && !document.hidden) refresh();
+    }, 30000);
+  }
+
+  function initControls() {
+    $all('nav.tabs button').forEach(function (b) {
+      b.onclick = function () {
+        ui.tab = b.getAttribute('data-tab');
+        $all('nav.tabs button').forEach(function (x) { x.classList.toggle('active', x === b); });
+        $all('[data-pane]').forEach(function (p) { p.classList.toggle('hidden', p.getAttribute('data-pane') !== ui.tab); });
+      };
+    });
+    $('#autoRefresh').onchange = setAuto; setAuto();
+    $('#refreshBtn').onclick = function () { refresh(); };
+    $('#exportBtn').onclick = exportExcel;
+    $('#ovAssign').onchange = function () { ui.assign = this.value; ui.cls = ''; renderOverview(); };
+    $('#ovFilter').onchange = renderDetail;
+    $('#mxClass').onchange = renderMatrix;
+    $('#mxFrom').onchange = renderMatrix;
+    $('#mxTo').onchange = renderMatrix;
+    $('#rsClass').onchange = renderRoster;
+    $('#newAssignBtn').onclick = function () { openForm(null); };
+    $('#fCancel').onclick = function () { $('#asForm').classList.add('hidden'); };
+    $('#fSave').onclick = saveAssignment;
+    $('#fAllClasses').onclick = function (e) {
+      e.preventDefault();
+      var boxes = $all('#fClasses input');
+      var all = boxes.every(function (b) { return b.checked; });
+      boxes.forEach(function (b) { b.checked = !all; });
+    };
+    $('#clsSave').onclick = saveClasses;
+    $('#importBtn').onclick = importStudents;
+  }
+
+  function renderAll() {
+    fillSelects();
+    renderOverview();
+    renderMatrix();
+    renderAssignTable();
+    renderRoster();
+  }
+
+  /* ---------- 計算 ---------- */
+  function sortedAssignments() {
+    return D.assignments.slice().sort(function (a, b) { return b.date.localeCompare(a.date) || b.id.localeCompare(a.id); });
+  }
+  function roster(cls) {
+    return D.students.filter(function (s) { return s.className === cls; })
+      .sort(function (a, b) { return (+a.seat || 999) - (+b.seat || 999) || a.seat.localeCompare(b.seat); });
+  }
+  function subOf(id, email) {
+    return D.submissions.filter(function (s) { return s.id === id && s.email === email; })[0];
+  }
+  function classStat(a, cls) {
+    var r = roster(cls), done = 0, part = 0;
+    r.forEach(function (st) {
+      var s = subOf(a.id, st.email);
+      if (s && s.done) done++; else if (s) part++;
+    });
+    return { total: r.length, done: done, part: part, none: r.length - done - part, rate: r.length ? Math.round(done / r.length * 100) : 0 };
+  }
+  function pct(n) { return n + '%'; }
+
+  function fillSelects() {
+    var list = sortedAssignments();
+    if (!ui.assign || !list.some(function (a) { return a.id === ui.assign; })) ui.assign = list[0] ? list[0].id : '';
+    $('#ovAssign').innerHTML = list.map(function (a) {
+      return '<option value="' + esc(a.id) + '"' + (a.id === ui.assign ? ' selected' : '') + '>' +
+        esc(a.date + '｜' + a.id + '｜' + (a.title || '') + (a.open ? '' : '（已關閉）')) + '</option>';
+    }).join('') || '<option value="">尚無作業，請先到「作業設定」新增</option>';
+    ['#mxClass', '#rsClass'].forEach(function (sel) {
+      var cur = $(sel).value;
+      $(sel).innerHTML = D.classes.map(function (c) { return '<option' + (c === cur ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('');
+    });
+  }
+
+  /* ---------- 即時完成率 ---------- */
+  function currentAssign() { return D.assignments.filter(function (a) { return a.id === ui.assign; })[0]; }
+
+  function renderOverview() {
+    var a = currentAssign();
+    if (!a) { $('#ovTitle').textContent = '尚無作業'; $('#ovStats').innerHTML = ''; $('#ovDetailCard').classList.add('hidden'); return; }
+    var stats = a.classes.map(function (c) { return { cls: c, st: classStat(a, c) }; });
+    var tot = stats.reduce(function (s, x) { s.total += x.st.total; s.done += x.st.done; return s; }, { total: 0, done: 0 });
+    $('#ovTitle').innerHTML = esc(a.date + '　' + a.id + '　' + (a.title || '')) +
+      '　<span class="badge ' + (a.open ? 'ok' : 'gray') + '">' + (a.open ? '開放中' : '已關閉') + '</span>' +
+      '<div class="muted" style="font-weight:400">全部 ' + a.classes.length + ' 班合計完成 ' + tot.done + ' / ' + tot.total + ' 人（' + (tot.total ? Math.round(tot.done / tot.total * 100) : 0) + '%）</div>';
+    if (!ui.cls || a.classes.indexOf(ui.cls) < 0) ui.cls = a.classes[0] || '';
+    $('#ovStats').innerHTML = stats.map(function (x) {
+      var s = x.st, t = s.total || 1;
+      return '<div class="stat' + (x.cls === ui.cls ? ' active' : '') + '" data-cls="' + esc(x.cls) + '">' +
+        '<div class="row"><b class="grow">' + esc(x.cls) + '</b><span class="num">' + pct(s.rate) + '</span></div>' +
+        '<div class="bar"><i class="done" style="width:' + (s.done / t * 100) + '%"></i><i class="part" style="width:' + (s.part / t * 100) + '%"></i></div>' +
+        '<div class="muted">完成 ' + s.done + '・未完成 ' + s.part + '・未繳 ' + s.none + '／共 ' + s.total + ' 人</div></div>';
+    }).join('');
+    $all('#ovStats .stat').forEach(function (el) {
+      el.onclick = function () { ui.cls = el.getAttribute('data-cls'); renderOverview(); };
+    });
+    $('#ovDetailCard').classList.remove('hidden');
+    renderDetail();
+  }
+
+  function renderDetail() {
+    var a = currentAssign();
+    if (!a || !ui.cls) return;
+    var filter = $('#ovFilter').value;
+    var rows = roster(ui.cls).map(function (st) { return { st: st, sub: subOf(a.id, st.email) }; });
+    // 已繳交但不在名單內的（例如被移出名單）
+    D.submissions.filter(function (s) { return s.id === a.id && s.className === ui.cls && !rows.some(function (r) { return r.st.email === s.email; }); })
+      .forEach(function (s) { rows.push({ st: { email: s.email, seat: s.seat, name: s.name + '（名單外）' }, sub: s }); });
+    rows = rows.filter(function (r) {
+      var d = r.sub && r.sub.done;
+      return !filter || (filter === 'done' ? d : !d);
+    });
+    $('#ovDetailTitle').textContent = ui.cls + ' 明細';
+    var showText = a.textMode !== '不需要', showFile = a.fileMode !== '不需要';
+    $('#ovTable').innerHTML = '<thead><tr><th>座號</th><th>姓名</th><th>狀態</th><th class="c">勾選</th>' +
+      (showText ? '<th>文字回覆</th>' : '') + (showFile ? '<th>檔案</th>' : '') + '<th>最後更新</th></tr></thead><tbody>' +
+      (rows.length ? rows.map(function (r) {
+        var s = r.sub;
+        var badge = !s ? '<span class="badge bad">未繳交</span>' : s.done ? '<span class="badge ok">已完成</span>' : '<span class="badge warn">未完成</span>';
+        var missing = s ? a.items.filter(function (_, i) { return s.checked.indexOf(i) < 0; }) : [];
+        return '<tr><td>' + esc(r.st.seat) + '</td><td>' + esc(r.st.name) + '</td><td>' + badge + '</td>' +
+          '<td class="c" title="' + esc(missing.length ? '未勾：' + missing.join('、') : '') + '">' + (s ? s.checked.length : 0) + '/' + a.items.length + '</td>' +
+          (showText ? '<td class="text">' + esc(s ? s.text : '') + '</td>' : '') +
+          (showFile ? '<td>' + (s ? s.files.map(function (f) { return '<a href="' + esc(f.url) + '" target="_blank" rel="noopener">' + esc(f.name) + '</a>'; }).join('<br>') : '') + '</td>' : '') +
+          '<td class="muted">' + esc(s ? s.updatedAt : '') + '</td></tr>';
+      }).join('') : '<tr><td colspan="7" class="muted center">' + (roster(ui.cls).length ? '沒有符合條件的學生' : '這班還沒有學生登記或匯入名單') + '</td></tr>') + '</tbody>';
+  }
+
+  /* ---------- 班級總表 ---------- */
+  function matrixData(cls, from, to) {
+    var as = D.assignments.filter(function (a) {
+      return a.classes.indexOf(cls) >= 0 && (!from || a.date >= from) && (!to || a.date <= to);
+    }).sort(function (a, b) { return a.date.localeCompare(b.date) || a.id.localeCompare(b.id); });
+    var st = roster(cls);
+    return { as: as, st: st };
+  }
+  function mark(sub) { return !sub ? '❌' : sub.done ? '✅' : '🟡'; }
+
+  function renderMatrix() {
+    var cls = $('#mxClass').value;
+    if (!cls) return;
+    var m = matrixData(cls, $('#mxFrom').value, $('#mxTo').value);
+    if (!m.as.length) { $('#mxTable').innerHTML = '<tr><td class="muted">這班在此期間沒有作業</td></tr>'; return; }
+    var head = '<thead><tr><th>座號</th><th>姓名</th>' + m.as.map(function (a) {
+      return '<th class="c" title="' + esc(a.title) + '">' + esc(a.date.slice(5)) + '<br>' + esc(a.id) + '</th>';
+    }).join('') + '<th class="c">完成數</th></tr></thead>';
+    var body = m.st.map(function (s) {
+      var n = 0;
+      var cells = m.as.map(function (a) { var sub = subOf(a.id, s.email); if (sub && sub.done) n++; return '<td class="c">' + mark(sub) + '</td>'; }).join('');
+      return '<tr><td>' + esc(s.seat) + '</td><td>' + esc(s.name) + '</td>' + cells + '<td class="c"><b>' + n + '/' + m.as.length + '</b></td></tr>';
+    }).join('');
+    var foot = '<tr><th colspan="2">完成率</th>' + m.as.map(function (a) { return '<th class="c">' + pct(classStat(a, cls).rate) + '</th>'; }).join('') + '<th></th></tr>';
+    $('#mxTable').innerHTML = head + '<tbody>' + (body || '<tr><td colspan="99" class="muted">這班還沒有學生</td></tr>') + foot + '</tbody>';
+  }
+
+  /* ---------- 作業設定 ---------- */
+  function renderAssignTable() {
+    var list = sortedAssignments();
+    $('#asTable').innerHTML = '<thead><tr><th>日期</th><th>編號</th><th>標題</th><th>班級</th><th class="c">項目</th><th>上傳/文字</th><th>狀態</th><th></th></tr></thead><tbody>' +
+      (list.map(function (a) {
+        return '<tr><td>' + esc(a.date) + '</td><td>' + esc(a.id) + '</td><td>' + esc(a.title) + '</td>' +
+          '<td>' + esc(a.classes.length === D.classes.length ? '全部' : a.classes.join('、')) + '</td><td class="c">' + a.items.length + '</td>' +
+          '<td>' + esc(a.fileMode + ' / ' + a.textMode) + '</td>' +
+          '<td><span class="badge ' + (a.open ? 'ok' : 'gray') + '">' + (a.open ? '開放中' : '已關閉') + '</span></td>' +
+          '<td style="white-space:nowrap"><button class="small" data-act="edit" data-id="' + esc(a.id) + '">編輯</button> ' +
+          '<button class="small" data-act="toggle" data-id="' + esc(a.id) + '">' + (a.open ? '關閉' : '開放') + '</button> ' +
+          '<button class="small" data-act="copy" data-id="' + esc(a.id) + '">複製</button> ' +
+          '<button class="small danger" data-act="del" data-id="' + esc(a.id) + '">刪除</button></td></tr>';
+      }).join('') || '<tr><td colspan="8" class="muted center">還沒有作業</td></tr>') + '</tbody>';
+    $all('#asTable button').forEach(function (b) {
+      b.onclick = function () {
+        var a = D.assignments.filter(function (x) { return x.id === b.getAttribute('data-id'); })[0];
+        var act = b.getAttribute('data-act');
+        if (act === 'edit') openForm(a);
+        if (act === 'copy') openForm(a, true);
+        if (act === 'toggle') {
+          var d = Object.assign({}, a, { originalId: a.id, open: !a.open });
+          A.api('saveAssignment', d).then(function () { A.toast(d.open ? '已開放' : '已關閉'); return refresh(); }).catch(function (e) { A.toast(e.message, true); });
+        }
+        if (act === 'del' && confirm('確定刪除作業 ' + a.id + '？\n（已繳交的紀錄仍會保留在試算表中）')) {
+          A.api('deleteAssignment', { id: a.id }).then(function () { A.toast('已刪除'); return refresh(); }).catch(function (e) { A.toast(e.message, true); });
+        }
+      };
+    });
+  }
+
+  function nextId() {
+    var max = 0;
+    D.assignments.forEach(function (a) { var m = /^HW(\d+)$/i.exec(a.id); if (m) max = Math.max(max, +m[1]); });
+    return 'HW' + ('0' + (max + 1)).slice(-2);
+  }
+  function today() {
+    var d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 10);
+  }
+
+  function openForm(a, copy) {
+    ui.editing = a && !copy ? a.id : null;
+    $('#asFormTitle').textContent = ui.editing ? '編輯作業 ' + a.id : (copy ? '複製作業' : '新增作業');
+    $('#fId').value = ui.editing ? a.id : nextId();
+    $('#fDate').value = ui.editing ? a.date : today();
+    $('#fTitle').value = a ? a.title : '';
+    $('#fDesc').value = a ? a.description : '';
+    $('#fItems').value = a ? a.items.join('\n') : '';
+    $('#fFile').value = a ? a.fileMode : '不需要';
+    $('#fText').value = a ? a.textMode : '不需要';
+    $('#fOpen').checked = a ? a.open : true;
+    $('#fClasses').innerHTML = D.classes.map(function (c) {
+      var on = a ? a.classes.indexOf(c) >= 0 : false;
+      return '<label><input type="checkbox" value="' + esc(c) + '"' + (on ? ' checked' : '') + '>' + esc(c) + '</label>';
+    }).join('');
+    $('#asForm').classList.remove('hidden');
+    $('#asForm').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function saveAssignment() {
+    var btn = $('#fSave');
+    var d = {
+      originalId: ui.editing || '',
+      id: $('#fId').value.trim(),
+      date: $('#fDate').value,
+      title: $('#fTitle').value.trim(),
+      description: $('#fDesc').value.trim(),
+      items: $('#fItems').value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean),
+      classes: $all('#fClasses input').filter(function (c) { return c.checked; }).map(function (c) { return c.value; }),
+      fileMode: $('#fFile').value,
+      textMode: $('#fText').value,
+      open: $('#fOpen').checked
+    };
+    btn.disabled = true;
+    A.api('saveAssignment', d).then(function () {
+      A.toast('已儲存');
+      $('#asForm').classList.add('hidden');
+      ui.assign = d.id;
+      return refresh();
+    }).catch(function (e) { A.toast(e.message, true); }).then(function () { btn.disabled = false; });
+  }
+
+  /* ---------- 班級與學生 ---------- */
+  function renderRoster() {
+    if (document.activeElement !== $('#clsText')) $('#clsText').value = D.classes.join('\n');
+    var cls = $('#rsClass').value;
+    var list = roster(cls);
+    $('#rsTable').innerHTML = '<thead><tr><th>座號</th><th>姓名</th><th>Email</th><th></th></tr></thead><tbody>' +
+      (list.map(function (s) {
+        return '<tr><td>' + esc(s.seat) + '</td><td>' + esc(s.name) + '</td><td class="muted">' + esc(s.email) + '</td>' +
+          '<td style="white-space:nowrap"><button class="small" data-act="edit" data-e="' + esc(s.email) + '">修改</button> ' +
+          '<button class="small danger" data-act="del" data-e="' + esc(s.email) + '">移除</button></td></tr>';
+      }).join('') || '<tr><td colspan="4" class="muted center">尚無學生</td></tr>') + '</tbody>';
+    $all('#rsTable button').forEach(function (b) {
+      b.onclick = function () {
+        var s = D.students.filter(function (x) { return x.email === b.getAttribute('data-e'); })[0];
+        if (b.getAttribute('data-act') === 'del') {
+          if (!confirm('將 ' + s.name + ' 移出名單？（繳交紀錄會保留）')) return;
+          A.api('saveStudents', { remove: [s.email] }).then(function () { A.toast('已移除'); return refresh(); }).catch(function (e) { A.toast(e.message, true); });
+        } else {
+          var cls2 = prompt('班級（需與班級清單一致）', s.className); if (cls2 === null) return;
+          var seat = prompt('座號', s.seat); if (seat === null) return;
+          var name = prompt('姓名', s.name); if (name === null) return;
+          A.api('saveStudents', { students: [{ email: s.email, className: cls2, seat: seat, name: name }] })
+            .then(function () { A.toast('已更新'); return refresh(); }).catch(function (e) { A.toast(e.message, true); });
+        }
+      };
+    });
+  }
+
+  function saveClasses() {
+    var list = $('#clsText').value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+    var removed = D.classes.filter(function (c) { return list.indexOf(c) < 0; });
+    if (removed.length && !confirm('以下班級將被移除：' + removed.join('、') + '\n確定嗎？')) return;
+    A.api('saveClasses', { classes: list }).then(function () { A.toast('班級已儲存'); return refresh(); }).catch(function (e) { A.toast(e.message, true); });
+  }
+
+  function importStudents() {
+    var lines = $('#importText').value.split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+    var students = lines.map(function (l) {
+      var c = l.split(/\t|,/).map(function (x) { return x.trim(); });
+      return { email: c[0], className: c[1], seat: c[2], name: c[3] };
+    }).filter(function (s) { return /@/.test(s.email); });
+    if (!students.length) return A.toast('沒有讀到資料，請確認格式：Email、班級、座號、姓名', true);
+    A.api('saveStudents', { students: students }).then(function (r) {
+      A.toast('已匯入 ' + r.count + ' 位學生');
+      $('#importText').value = '';
+      return refresh();
+    }).catch(function (e) { A.toast(e.message, true); });
+  }
+
+  /* ---------- 匯出 Excel ---------- */
+  function exportExcel() {
+    if (!window.XLSX) return A.toast('Excel 元件載入失敗，請重新整理頁面', true);
+    var wb = XLSX.utils.book_new();
+    var list = D.assignments.slice().sort(function (a, b) { return a.date.localeCompare(b.date) || a.id.localeCompare(b.id); });
+
+    // 1. 完成率總覽：每個作業 × 每個班級
+    var ov = [['上課日期', '作業編號', '標題'].concat(D.classes).concat(['合計'])];
+    list.forEach(function (a) {
+      var tDone = 0, tAll = 0;
+      var row = [a.date, a.id, a.title];
+      D.classes.forEach(function (c) {
+        if (a.classes.indexOf(c) < 0) return row.push('—');
+        var s = classStat(a, c); tDone += s.done; tAll += s.total;
+        row.push(s.done + '/' + s.total + '（' + s.rate + '%）');
+      });
+      row.push(tAll ? tDone + '/' + tAll + '（' + Math.round(tDone / tAll * 100) + '%）' : '');
+      ov.push(row);
+    });
+    addSheet(wb, '完成率總覽', ov);
+
+    // 2. 每班一張總表
+    D.classes.forEach(function (c) {
+      var m = matrixData(c);
+      if (!m.st.length && !m.as.length) return;
+      var rows = [['座號', '姓名', 'Email'].concat(m.as.map(function (a) { return a.date + ' ' + a.id; })).concat(['完成數'])];
+      m.st.forEach(function (s) {
+        var n = 0;
+        var cells = m.as.map(function (a) { var sub = subOf(a.id, s.email); if (sub && sub.done) n++; return !sub ? '未繳' : sub.done ? '完成' : '未完成'; });
+        rows.push([s.seat, s.name, s.email].concat(cells).concat([n + '/' + m.as.length]));
+      });
+      rows.push(['', '完成率', ''].concat(m.as.map(function (a) { return classStat(a, c).rate + '%'; })).concat(['']));
+      addSheet(wb, c, rows);
+    });
+
+    // 3. 繳交明細
+    var amap = {}; D.assignments.forEach(function (a) { amap[a.id] = a; });
+    var det = [['上課日期', '作業編號', '標題', '班級', '座號', '姓名', 'Email', '狀態', '勾選數', '未勾選項目', '文字回覆', '檔案', '首次提交', '最後更新']];
+    D.submissions.slice().sort(function (x, y) {
+      var ax = amap[x.id] || {}, ay = amap[y.id] || {};
+      return String(ax.date).localeCompare(String(ay.date)) || x.id.localeCompare(y.id) || x.className.localeCompare(y.className) || x.seat.localeCompare(y.seat);
+    }).forEach(function (s) {
+      var a = amap[s.id] || { date: '', title: '(已刪除)', items: [] };
+      det.push([a.date, s.id, a.title, s.className, s.seat, s.name, s.email, s.done ? '完成' : '未完成',
+        s.checked.length + '/' + a.items.length,
+        a.items.filter(function (_, i) { return s.checked.indexOf(i) < 0; }).join('、'),
+        s.text, s.files.map(function (f) { return f.name + ' ' + f.url; }).join('\n'), s.firstAt, s.updatedAt]);
+    });
+    addSheet(wb, '繳交明細', det);
+
+    XLSX.writeFile(wb, '課堂檢核_' + today() + '.xlsx');
+  }
+
+  function addSheet(wb, name, rows) {
+    var ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = rows[0].map(function (_, i) {
+      var w = rows.reduce(function (m, r) { return Math.max(m, String(r[i] || '').length); }, 4);
+      return { wch: Math.min(40, w + 2) };
+    });
+    XLSX.utils.book_append_sheet(wb, ws, name.replace(/[\\\/\?\*\[\]:]/g, '_').slice(0, 31));
+  }
+})();
+</script>
+</body>
+</html>
